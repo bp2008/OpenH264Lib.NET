@@ -7,7 +7,8 @@
 using namespace System::Drawing;
 using namespace System::Drawing::Imaging;
 
-namespace OpenH264Lib {
+namespace OpenH264Lib
+{
 
 	// Reference
 	// file://openh264-master\test\api\BaseEncoderTest.cpp
@@ -15,7 +16,7 @@ namespace OpenH264Lib {
 
 	///<summary>Decode h264 frame data to Bitmap.</summary>
 	///<returns>Bitmap. Might be null if frame data is incomplete.</returns>
-	Bitmap^ Decoder::Decode(array<Byte> ^frame, int length)
+	Bitmap^ Decoder::Decode(array<Byte>^ frame, int length)
 	{
 		// http://xptn.dtiblog.com/blog-entry-21.html
 		pin_ptr<Byte> ptr = &frame[0];
@@ -24,7 +25,19 @@ namespace OpenH264Lib {
 		return rc;
 	}
 
-	Bitmap^ Decoder::Decode(unsigned char *frame, int length)
+	Bitmap^ Decoder::Decode(unsigned char* frame, int length)
+	{
+		int width, height;
+
+		byte* rgb = DecodeToRGBInternal(frame, length, width, height);
+		if (rgb == nullptr)
+			return nullptr;
+		Bitmap^ result = RGBtoBitmap(rgb, width, height);
+		delete rgb;
+
+		return result;
+	}
+	std::array<byte*, 3>* Decoder::DecodeToYUVInternal(unsigned char* frame, int length, [Out] int% width, [Out] int% height, [Out] int% stride)
 	{
 		unsigned char* buffer[3];
 
@@ -34,32 +47,75 @@ namespace OpenH264Lib {
 		if (bufInfo.iBufferStatus != 1) return nullptr;
 
 		// Y Plane(luma)
-		byte* y_plane = buffer[0];
+		byte * y_plane = buffer[0];
 		int y_w = bufInfo.UsrData.sSystemBuffer.iWidth;
 		int y_h = bufInfo.UsrData.sSystemBuffer.iHeight;
 		int y_s = bufInfo.UsrData.sSystemBuffer.iStride[0];
 
 		// U Plane(chroma B - Y')
-		byte* u_plane = buffer[1];
+		byte * u_plane = buffer[1];
 		int u_w = bufInfo.UsrData.sSystemBuffer.iWidth / 2;
 		int u_h = bufInfo.UsrData.sSystemBuffer.iHeight / 2;
 		int u_s = bufInfo.UsrData.sSystemBuffer.iStride[1];
 
 		// V Plane(chroma R - Y')
-		byte* v_plane = buffer[2];
+		byte * v_plane = buffer[2];
 		int v_w = bufInfo.UsrData.sSystemBuffer.iWidth / 2;
 		int v_h = bufInfo.UsrData.sSystemBuffer.iHeight / 2;
 		int v_s = bufInfo.UsrData.sSystemBuffer.iStride[1];
 
-		int width = y_w;
-		int height = y_h;
-		int stride = y_s;
+		width = y_w;
+		height = y_h;
+		stride = y_s;
 
-		byte* rgb = YUV420PtoRGB(y_plane, v_plane, u_plane, width, height, stride); // なぜかuvが逆。
-		Bitmap^ result = RGBtoBitmap(rgb, width, height);
+		return new std::array<byte*, 3>{ y_plane, u_plane, v_plane };
+	}
+	byte* Decoder::DecodeToRGBInternal(unsigned char* frame, int length, [Out] int% width, [Out] int% height)
+	{
+		int stride;
+		std::array<byte*, 3>* planes = DecodeToYUVInternal(frame, length, width, height, stride);
+		if (planes == nullptr)
+			return nullptr;
+
+		byte* rgb = YUV420PtoRGB(planes->at(0), planes->at(1), planes->at(2), width, height, stride); // なぜかuvが逆。
+		delete planes;
+		return rgb;
+	}
+
+	array<Byte>^ Decoder::DecodeToRGB(array<Byte>^ frame, [Out] int% width, [Out] int% height)
+	{
+		return DecodeToRGB(frame, frame->Length, width, height);
+	}
+	array<Byte>^ Decoder::DecodeToRGB(array<Byte>^ frame, int length, [Out] int% width, [Out] int% height)
+	{
+		pin_ptr<Byte> frame_ptr = &frame[0];
+		byte* rgb = DecodeToRGBInternal(frame_ptr, length, width, height);
+		if (rgb == nullptr)
+			return nullptr;
+
+		array<Byte>^ arr = gcnew array<Byte>(width * height * 3);
+		System::Runtime::InteropServices::Marshal::Copy(IntPtr(rgb), arr, 0, arr->Length);
 		delete rgb;
+		return arr;
+	}
+	array<array<Byte>^>^ Decoder::DecodeToYUV(array<Byte>^ frame, int length, [Out] int% width, [Out] int% height, [Out] int% stride)
+	{
+		pin_ptr<Byte> frame_ptr = &frame[0];
+		std::array<byte*, 3>* planes = DecodeToYUVInternal(frame_ptr, length, width, height, stride);
+		if (planes == nullptr)
+			return nullptr;
 
-		return result;
+		array<array<Byte>^> ^ arr = gcnew array<array<Byte>^>(3);
+		arr[0] = gcnew array<Byte>(height * stride);
+		arr[1] = gcnew array<Byte>((height * stride) / 2);
+		arr[2] = gcnew array<Byte>((height * stride) / 2);
+		System::Runtime::InteropServices::Marshal::Copy(IntPtr(planes->at(0)), arr[0], 0, arr[0]->Length);
+		System::Runtime::InteropServices::Marshal::Copy(IntPtr(planes->at(1)), arr[1], 0, arr[1]->Length);
+		System::Runtime::InteropServices::Marshal::Copy(IntPtr(planes->at(2)), arr[2], 0, arr[2]->Length);
+
+		delete planes;
+
+		return arr;
 	}
 
 	int Decoder::Setup()
@@ -77,7 +133,7 @@ namespace OpenH264Lib {
 
 	// コンストラクタ
 	// dllName:"openh264-1.7.0-win32.dll"のような文字列を指定する。
-	Decoder::Decoder(String ^dllName)
+	Decoder::Decoder(String ^ dllName)
 	{
 		// Load DLL
 		pin_ptr<const wchar_t> dllname = PtrToStringChars(dllName);
@@ -90,7 +146,7 @@ namespace OpenH264Lib {
 		DestroyDecoderFunc = (WelsDestroyDecoderFunc)GetProcAddress(hDll, "WelsDestroyDecoder");
 		if (DestroyDecoderFunc == NULL) throw gcnew System::DllNotFoundException(String::Format("Unable to load WelsDestroyDecoder func in '{0}'"));
 
-		ISVCDecoder* dec = nullptr;
+		ISVCDecoder * dec = nullptr;
 		int rc = CreateDecoderFunc(&dec);
 		decoder = dec;
 		if (rc != 0) throw gcnew System::DllNotFoundException(String::Format("Unable to call WelsCreateSVCDecoder func in '{0}'"));
@@ -117,7 +173,7 @@ namespace OpenH264Lib {
 		DestroyDecoderFunc(decoder);
 	}
 
-	byte* Decoder::YUV420PtoRGB(byte* yplane, byte* uplane, byte* vplane, int width, int height, int stride)
+	byte* Decoder::YUV420PtoRGB(byte * yplane, byte * uplane, byte * vplane, int width, int height, int stride)
 	{
 		// https://www.ite.or.jp/contents/keywords/FILE-20120103130828.pdf
 		// Yは輝度、Uは赤、Vは青との色差。
@@ -151,9 +207,9 @@ namespace OpenH264Lib {
 			int rowIdx = (stride * y);
 			int uvpIdx = (stride / 2) * (y / 2);
 
-			byte* pYp = yplane + rowIdx;
-			byte* pUp = uplane + uvpIdx;
-			byte* pVp = vplane + uvpIdx;
+			byte * pYp = yplane + rowIdx;
+			byte * pVp = uplane + uvpIdx; // These are backwards for some reason
+			byte * pUp = vplane + uvpIdx; // These are backwards for some reason
 
 			// 2Pixelずつ処理する。
 			for (int x = 0; x < width; x += 2)
@@ -189,12 +245,27 @@ namespace OpenH264Lib {
 		return result;
 	}
 
-	Bitmap^ Decoder::RGBtoBitmap(byte* rgb, int width, int height)
+	array<Byte> ^ Decoder::YUV420PtoRGB(array<array<Byte>^> ^ planes, int width, int height, int stride)
+	{
+		pin_ptr<Byte> y = &(planes[0])[0];
+		pin_ptr<Byte> u = &(planes[1])[0];
+		pin_ptr<Byte> v = &(planes[2])[0];
+		byte* rgb = YUV420PtoRGB(y, u, v, width, height, stride);
+
+		array<Byte>^ arr = gcnew array<Byte>(width * height * 3);
+		System::Runtime::InteropServices::Marshal::Copy(IntPtr(rgb), arr, 0, arr->Length);
+
+		delete rgb;
+
+		return arr;
+	}
+
+	Bitmap^ Decoder::RGBtoBitmap(byte * rgb, int width, int height)
 	{
 		int pixelSize = 3;
 		Bitmap^ bmp = gcnew Bitmap(width, height, System::Drawing::Imaging::PixelFormat::Format24bppRgb);
 		BitmapData^ bmpDate = bmp->LockBits(System::Drawing::Rectangle(0, 0, width, height), ImageLockMode::WriteOnly, bmp->PixelFormat);
-		byte *ptr = (byte *)bmpDate->Scan0.ToPointer();
+		byte* ptr = (byte*)bmpDate->Scan0.ToPointer();
 
 		int cnt = 0;
 		for (int y = 0; y <= height - 1; y++)

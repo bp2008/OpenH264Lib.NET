@@ -27,7 +27,7 @@ namespace OpenH264Lib {
 		return rc;
 	}
 
-	// C#からbyte[]として呼び出し可能
+	// C#からbyte[]として呼び出し可能 
 	int Encoder::Encode(array<Byte> ^i420, float timestamp)
 	{
 		// http://xptn.dtiblog.com/blog-entry-21.html
