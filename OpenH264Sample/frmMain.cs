@@ -11,6 +11,7 @@ namespace OpenH264Sample
 {
 	public partial class frmMain : Form
 	{
+		string dllPath = "openh264-1.8.0-win" + (Environment.Is64BitProcess ? "64" : "32") + ".dll";
 		public frmMain()
 		{
 			InitializeComponent();
@@ -38,7 +39,7 @@ namespace OpenH264Sample
 			var writer = new H264Writer(aviFile, firstFrame.Width, firstFrame.Height, fps);
 
 			// H264エンコーダーを作成
-			var encoder = new OpenH264Lib.Encoder("openh264-1.8.0-win" + (Environment.Is64BitProcess ? "64" : "32") + ".dll");
+			var encoder = new OpenH264Lib.Encoder(dllPath);
 
 			// 1フレームエンコードするごとにライターに書き込み
 			OpenH264Lib.Encoder.OnEncodeCallback onEncode = (data, length, frameType) =>
@@ -55,7 +56,7 @@ namespace OpenH264Sample
 			for (int i = 0; i < paths.Length; i++)
 			{
 				var bmp = new Bitmap(paths[i]);
-				encoder.Encode(bmp, i * 1000);
+				encoder.Encode(bmp, nudFps.Value == 0 ? 0.5f : i / (float)nudFps.Value);
 				bmp.Dispose();
 			}
 
@@ -75,7 +76,7 @@ namespace OpenH264Sample
 
 		private void H264Decode(string path, int fps)
 		{
-			var decoder = new OpenH264Lib.Decoder("openh264-1.8.0-win" + (Environment.Is64BitProcess ? "64" : "32") + ".dll");
+			var decoder = new OpenH264Lib.Decoder(dllPath);
 
 			var aviFile = System.IO.File.OpenRead(path);
 			var riff = new RiffFile(aviFile);
@@ -106,25 +107,29 @@ namespace OpenH264Sample
 			dialog.Filter = "Image Files (*.bmp, *.png, *.jpg)|*.bmp;*.png;*.jpg";
 			if (dialog.ShowDialog() == DialogResult.OK)
 			{
-				OpenH264Lib.Encoder encoder = new OpenH264Lib.Encoder("openh264-1.8.0-win" + (Environment.Is64BitProcess ? "64" : "32") + ".dll");
-				OpenH264Lib.Decoder decoder = new OpenH264Lib.Decoder("openh264-1.8.0-win" + (Environment.Is64BitProcess ? "64" : "32") + ".dll");
-				// 1フレームエンコードするごとにライターに書き込み
-				OpenH264Lib.Encoder.OnEncodeCallback onEncode = (data, length, frameType) =>
+				using (OpenH264Lib.Encoder encoder = new OpenH264Lib.Encoder(dllPath))
+				using (OpenH264Lib.Decoder decoder = new OpenH264Lib.Decoder(dllPath))
 				{
-					bool keyFrame = (frameType == OpenH264Lib.Encoder.FrameType.IDR) || (frameType == OpenH264Lib.Encoder.FrameType.I);
-					Bitmap image = decoder.Decode(data.Take(length).ToArray(), length);
-					Image old = pbxScreen.Image;
-					pbxScreen.Image = image;
-					if (old != null)
-						old.Dispose();
-					Application.DoEvents();
-				};
-				using (Bitmap firstFrame = new Bitmap(dialog.FileNames[0]))
-					encoder.Setup(firstFrame.Width, firstFrame.Height, 5000000, (float)nudFps.Value, 2.0f, onEncode);
-				for (int i = 0; i < dialog.FileNames.Length; i++)
-				{
-					using (Bitmap bmp = new Bitmap(dialog.FileNames[i]))
-						encoder.Encode(bmp, i * 1000);
+					// 1フレームエンコードするごとにライターに書き込み
+					OpenH264Lib.Encoder.OnEncodeCallback onEncode = (data, length, frameType) =>
+					{
+						bool keyFrame = (frameType == OpenH264Lib.Encoder.FrameType.IDR) || (frameType == OpenH264Lib.Encoder.FrameType.I);
+						Bitmap image = decoder.Decode(data.Take(length).ToArray(), length);
+						Image old = pbxScreen.Image;
+						pbxScreen.Image = image;
+						if (old != null)
+							old.Dispose();
+						Application.DoEvents();
+					};
+					for (int i = 0; i < dialog.FileNames.Length; i++)
+					{
+						using (Bitmap bmp = new Bitmap(dialog.FileNames[i]))
+						{
+							if (i == 0)
+								encoder.Setup(bmp.Width, bmp.Height, 5000000, (float)nudFps.Value, 2.0f, onEncode);
+							encoder.Encode(bmp, nudFps.Value == 0 ? 0.5f : i / (float)nudFps.Value);
+						}
+					}
 				}
 			}
 		}
